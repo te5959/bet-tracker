@@ -64,6 +64,24 @@ CREATE TABLE IF NOT EXISTS bets (
 
 CREATE INDEX IF NOT EXISTS idx_bets_status ON bets(status);
 CREATE INDEX IF NOT EXISTS idx_raw_images_status ON raw_images(status);
+
+-- Phase 2 : résultat brut de l'analyse IA Vision pour chaque image.
+-- Une ligne par image analysée. On garde le JSON complet retourné par le
+-- modèle pour audit / réanalyse future (règle 8 du cahier des charges),
+-- même si la décision finale de classification (Phase 3) n'est pas
+-- encore appliquée ici.
+CREATE TABLE IF NOT EXISTS image_analysis (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    raw_image_id INTEGER NOT NULL REFERENCES raw_images(id),
+    image_type TEXT,        -- new_bet | winning_bet | unknown | ignored (brut, avant classification finale)
+    confidence REAL,
+    extracted_json TEXT NOT NULL,  -- réponse structurée complète du modèle, en JSON
+    model_used TEXT,
+    analyzed_at TEXT NOT NULL DEFAULT (datetime('now')),
+    error TEXT              -- rempli si l'analyse a échoué (permet de repérer les images à revoir)
+);
+
+CREATE INDEX IF NOT EXISTS idx_image_analysis_raw_image ON image_analysis(raw_image_id);
 """
 
 
@@ -123,3 +141,52 @@ def count_raw_images(db_path: Path) -> int:
     with get_connection(db_path) as conn:
         row = conn.execute("SELECT COUNT(*) AS c FROM raw_images").fetchone()
         return row["c"]
+
+
+# --- Phase 2 : images en attente d'analyse IA ---
+
+def get_captured_images(db_path: Path, limit: int = 20):
+    """Retourne les images pas encore analysées (status='CAPTURED'),
+    les plus anciennes en premier."""
+    with get_connection(db_path) as conn:
+        rows = conn.execute(
+            """
+            SELECT id, telegram_message_id, telegram_date, file_path
+            FROM raw_images
+            WHERE status = 'CAPTURED'
+            ORDER BY id ASC
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+
+def save_image_analysis(
+    db_path: Path,
+    raw_image_id: int,
+    image_type: str | None,
+    confidence: float | None,
+    extracted_json: str,
+    model_used: str,
+    error: str | None = None,
+) -> int:
+    with get_connection(db_path) as conn:
+        cur = conn.execute(
+            """
+            INSERT INTO image_analysis
+                (raw_image_id, image_type, confidence, extracted_json, model_used, error)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (raw_image_id, image_type, confidence, extracted_json, model_used, error),
+        )
+        # L'image est marquée ANALYZED qu'il y ait eu succès ou erreur :
+        # en cas d'erreur, le champ `error` de image_analysis permet de la repérer
+        # pour un nouveau traitement manuel, sans bloquer la boucle sur cette image.
+        new_status = "ANALYSIS_FAILED" if error else "ANALYZED"
+        conn.execute(
+            "UPDATE raw_images SET status = ? WHERE id = ?",
+            (new_status, raw_image_id),
+        )
+        conn.commit()
+        return cur.lastrowid

@@ -1,11 +1,11 @@
-# Telegram Bet Tracker — Phase 1
+# Telegram Bet Tracker — Phase 1 + Phase 2
 
 Système de suivi et d'analyse de paris publiés sous forme d'images dans un
 groupe Telegram (voir cahier des charges complet : `knowledge.md` du projet).
 
-## État actuel : Phase 1 uniquement
+## État actuel
 
-Ce que fait le code aujourd'hui :
+### Phase 1 — Capture (validée en production)
 
 - se connecte à **un seul** groupe/canal Telegram (avec un compte utilisateur,
   pas un bot) ;
@@ -18,18 +18,33 @@ Ce que fait le code aujourd'hui :
   statut `CAPTURED`) ;
 - journalise chaque étape dans `logs/pipeline.log` (et console).
 
-Ce que le code **ne fait pas encore** (phases suivantes, non commencées) :
+### Phase 2 — Analyse IA Vision (prête, à valider en conditions réelles)
 
-- aucune analyse IA / vision des images (Phase 2) ;
-- aucune classification NEW_BET / WINNING_BET / IGNORED (Phase 3) ;
+- lit les images `status='CAPTURED'` non encore analysées ;
+- envoie chaque image à **Claude Haiku 4.5** (API vision, `tool use` pour
+  forcer une réponse structurée conforme au schéma de la section 7) ;
+- extrait : type d'image (`new_bet` / `winning_bet` / `unknown` / `ignored`),
+  niveau de confiance, équipes, compétition, marché, cote, mise, gain
+  potentiel, statut visible sur le ticket ;
+- enregistre le résultat brut (JSON complet) dans la table `image_analysis`,
+  pour audit et réanalyse future (règle 8) ;
+- marque l'image `ANALYZED` (succès) ou `ANALYSIS_FAILED` (erreur réseau/API —
+  l'image reste visible pour un nouveau traitement, elle n'est jamais perdue) ;
+- script séparé du listener temps réel (`analyze_pending.py`), pour pouvoir
+  être testé et validé indépendamment.
+
+**Important** : la Phase 2 s'arrête à l'extraction + classification brute. La
+**décision métier** (créer un pari en base `bets`, matcher une confirmation de
+gain à un pari existant) est la Phase 3/4 — pas encore développée, pour valider
+d'abord la fiabilité de l'extraction sur des images réelles du groupe.
+
+Ce que le code **ne fait pas encore** :
+
+- aucune création automatique de paris dans la table `bets` (Phase 3) ;
 - aucun matching entre pari et confirmation de gain (Phase 4) ;
 - aucune détection de perte par délai (Phase 5) ;
 - aucune statistique (Phase 6) ;
 - **aucune automatisation de paris** (hors scope V1, section 21).
-
-La table `bets` existe déjà dans le schéma (pour figer la structure de
-données dès maintenant), mais elle reste vide tant que la Phase 2 n'est pas
-développée.
 
 ## Installation
 
@@ -45,7 +60,8 @@ Remplir `.env` :
 - `TELEGRAM_API_ID` / `TELEGRAM_API_HASH` : à créer sur
   https://my.telegram.org/apps
 - `TELEGRAM_TARGET_GROUP` : username du groupe (sans @) ou son ID numérique
-- Le reste peut rester par défaut.
+- `ANTHROPIC_API_KEY` : à créer sur https://console.anthropic.com (API Keys)
+- `ANTHROPIC_MODEL` : peut rester à `claude-haiku-4-5-20251001` (par défaut)
 
 ## Premier lancement
 
@@ -65,20 +81,43 @@ redémarrage) :
 python main.py --backfill 50
 ```
 
+## Lancer l'analyse IA (Phase 2)
+
+Une fois des images capturées (Phase 1 en marche depuis un moment) :
+
+```bash
+# Traite jusqu'à 20 images en attente, puis quitte
+python analyze_pending.py
+
+# Traite jusqu'à 100 images
+python analyze_pending.py --limit 100
+
+# Tourne en continu, vérifie toutes les 30 secondes s'il y a de nouvelles images
+python analyze_pending.py --loop 30
+```
+
+Pour l'usage courant sur le serveur, `--loop 30` est recommandé, en plus du
+listener Phase 1 déjà actif — ce sont deux process indépendants.
+
 ## Tests
 
-Un test indépendant de Telegram valide le schéma DB et l'anti-doublon :
+Tests indépendants de Telegram et du réseau (schéma DB, anti-doublon, flux
+d'analyse) :
 
 ```bash
 python tests/test_db.py
+python tests/test_image_analysis.py
 ```
 
-## Prochaine étape (Phase 2 — à valider avant de commencer)
+## Coût estimé (Phase 2)
 
-Envoyer chaque image `status='CAPTURED'` à un modèle de vision IA pour en
-extraire les données structurées du ticket (équipes, cote, mise, gain
-potentiel...), conformément à la section 7 du cahier des charges.
+Avec Claude Haiku 4.5 (~$1/$5 par million de tokens) et environ 40 images/jour,
+le coût est de l'ordre de quelques euros par mois. À surveiller sur
+https://console.anthropic.com une fois en production.
 
-Point à trancher ensemble avant de coder :
-- quel modèle/API de vision utiliser (ex: Claude API) et comment gérer la clé
-  API de façon sécurisée dans ce projet.
+## Prochaine étape (Phase 3 — à valider avant de commencer)
+
+Décider, à partir du résultat de `image_analysis`, s'il faut créer un nouveau
+pari dans la table `bets` (si `image_type='new_bet'` et confiance
+suffisante), ou marquer l'image pour révision manuelle si la confiance est
+trop faible (section 8, `MANUAL_REVIEW`).

@@ -40,6 +40,10 @@ class Settings:
     images_dir: Path
     log_file: Path
 
+    # Phase 2
+    anthropic_api_key: str
+    anthropic_model: str
+
 
 def load_settings() -> Settings:
     return Settings(
@@ -52,4 +56,8 @@ def load_settings() -> Settings:
         db_path=Path(os.environ.get("DB_PATH", "./storage/bets.db")),
         images_dir=Path(os.environ.get("IMAGES_DIR", "./storage/images")),
         log_file=Path(os.environ.get("LOG_FILE", "./logs/pipeline.log")),
+        anthropic_api_key=_require("ANTHROPIC_API_KEY"),
+        anthropic_model=os.environ.get(
+            "ANTHROPIC_MODEL", "claude-haiku-4-5-20251001"
+        ),
     )
