@@ -156,6 +156,36 @@ sqlite3 storage/bets.db "SELECT status, COUNT(*) FROM bets GROUP BY status;"
 sqlite3 storage/bets.db "SELECT * FROM bets WHERE status='MANUAL_REVIEW';"
 ```
 
+## Automatiser tout le pipeline en continu
+
+Une fois les Phases 1 à 4 validées manuellement, on peut faire tourner tout
+le pipeline en tâche de fond en permanence, avec redémarrage automatique en
+cas de crash — comme le fait déjà le listener Phase 1 :
+
+```bash
+bash deploy/install_pipeline_services.sh
+```
+
+Cela installe et démarre 3 nouveaux services :
+
+| Service | Rôle | Fréquence |
+|---|---|---|
+| `bet-tracker-analyze` | Phase 2 : analyse IA des nouvelles images | vérifie toutes les 30s |
+| `bet-tracker-route` | Phase 3 : création des paris | vérifie toutes les 30s |
+| `bet-tracker-match` | Phase 4 : matching des gains | vérifie toutes les 30s |
+
+Avec `bet-tracker` (Phase 1, déjà actif), le pipeline complet tourne alors
+de bout en bout automatiquement : une image publiée dans le groupe est
+capturée, analysée, transformée en pari, et matchée à sa confirmation de
+gain, sans aucune intervention manuelle.
+
+Vérifier que tout tourne :
+
+```bash
+systemctl status bet-tracker bet-tracker-analyze bet-tracker-route bet-tracker-match
+tail -f logs/pipeline.log
+```
+
 ## Lancer le matching des gains (Phase 4)
 
 Une fois des paris `PENDING` en base et des images `winning_bet` détectées :

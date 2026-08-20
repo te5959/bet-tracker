@@ -1,0 +1,16 @@
+[Unit]
+Description=Telegram Bet Tracker - Matching gains (Phase 4)
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/telegram-bet-tracker
+ExecStart=/opt/telegram-bet-tracker/venv/bin/python /opt/telegram-bet-tracker/match_pending.py --loop 30
+Restart=always
+RestartSec=10
+User=root
+EnvironmentFile=/opt/telegram-bet-tracker/.env
+MemoryMax=256M
+
+[Install]
+WantedBy=multi-user.target
