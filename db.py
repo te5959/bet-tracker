@@ -284,3 +284,70 @@ def count_bets_by_status(db_path: Path) -> dict:
             "SELECT status, COUNT(*) AS c FROM bets GROUP BY status"
         ).fetchall()
         return {row["status"]: row["c"] for row in rows}
+
+
+# --- Phase 4 : matching image gagnante <-> pari existant ---
+
+def get_open_bets(db_path: Path, statuses=("PENDING",)):
+    """Retourne les paris encore ouverts (candidats au matching), les plus
+    anciens en premier — utile pour le départage en cas d'égalité de score
+    (section 9 : privilégier le pari le plus ancien)."""
+    placeholders = ",".join("?" for _ in statuses)
+    with get_connection(db_path) as conn:
+        rows = conn.execute(
+            f"""
+            SELECT id, team_1, team_2, competition, market, selection,
+                   odds, stake, potential_return, detected_at, status
+            FROM bets
+            WHERE status IN ({placeholders})
+            ORDER BY id ASC
+            """,
+            tuple(statuses),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+
+def get_unmatched_winning_analyses(db_path: Path, limit: int = 20):
+    """Retourne les analyses classées winning_bet, déjà routées par la
+    Phase 3, dont l'image n'est encore reliée à aucun pari (bets.winning_image_id).
+    Le fait de ne pas persister un statut "échec de matching" est volontaire :
+    si aucun bon candidat n'existe encore, on veut pouvoir retenter plus tard
+    (ex: si le new_bet correspondant arrive après coup)."""
+    with get_connection(db_path) as conn:
+        rows = conn.execute(
+            """
+            SELECT id, raw_image_id, image_type, confidence, extracted_json
+            FROM image_analysis
+            WHERE image_type = 'winning_bet'
+              AND routed_at IS NOT NULL
+              AND error IS NULL
+              AND raw_image_id NOT IN (
+                  SELECT winning_image_id FROM bets WHERE winning_image_id IS NOT NULL
+              )
+            ORDER BY id ASC
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+
+def mark_bet_won(
+    db_path: Path,
+    bet_id: int,
+    winning_image_id: int,
+    confirmed_payout: float | None,
+) -> None:
+    with get_connection(db_path) as conn:
+        conn.execute(
+            """
+            UPDATE bets
+            SET status = 'WON',
+                winning_image_id = ?,
+                confirmed_payout = ?,
+                updated_at = datetime('now')
+            WHERE id = ?
+            """,
+            (winning_image_id, confirmed_payout, bet_id),
+        )
+        conn.commit()

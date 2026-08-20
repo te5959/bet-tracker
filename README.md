@@ -49,9 +49,28 @@ d'abord la fiabilité de l'extraction sur des images réelles du groupe.
 - marque chaque analyse comme routée (`routed_at`), pour ne jamais la retraiter deux fois ;
 - script séparé (`route_pending.py`), indépendant de l'analyse IA et du listener.
 
+### Phase 4 — Matching image gagnante ↔ pari (prête, à valider en conditions réelles)
+
+- lit les analyses `winning_bet` déjà routées, dont l'image n'est reliée à
+  aucun pari (`bets.winning_image_id`) ;
+- pour chacune, calcule un **score de similarité** avec chaque pari `PENDING`
+  ouvert (section 9) :
+  - équipes (40%, gère aussi l'ordre inversé équipe1/équipe2) ;
+  - marché/sélection (25%) ;
+  - cote (20%, tolérance numérique) ;
+  - mise (15%, tolérance numérique) ;
+- si le meilleur score ≥ 60% (seuil configurable) → le pari passe en `WON`,
+  avec `winning_image_id` et `confirmed_payout` renseignés ;
+- si aucun candidat ou score insuffisant → rien n'est forcé, l'image sera
+  retentée au prochain passage (utile si le bon pari `PENDING` apparaît
+  plus tard) ;
+- **cas du pari posté deux fois** (signalé lors des tests réels) : en cas
+  d'égalité de score entre plusieurs paris `PENDING` quasi-identiques, le
+  plus **ancien** est choisi — testé explicitement
+  (`tests/test_bet_matcher.py::test_duplicate_bet_tiebreak_oldest_wins`).
+
 Ce que le code **ne fait pas encore** :
 
-- aucun matching entre un `winning_bet` et un pari `PENDING` existant (Phase 4) ;
 - aucune détection de perte par délai (Phase 5) ;
 - aucune statistique (Phase 6) ;
 - **aucune automatisation de paris** (hors scope V1, section 21).
@@ -137,20 +156,41 @@ sqlite3 storage/bets.db "SELECT status, COUNT(*) FROM bets GROUP BY status;"
 sqlite3 storage/bets.db "SELECT * FROM bets WHERE status='MANUAL_REVIEW';"
 ```
 
+## Lancer le matching des gains (Phase 4)
+
+Une fois des paris `PENDING` en base et des images `winning_bet` détectées :
+
+```bash
+# Traite jusqu'à 50 images gagnantes en attente, puis quitte
+python match_pending.py
+
+# Seuil de score personnalisé (défaut 0.60)
+python match_pending.py --threshold 0.7
+
+# Tourne en continu, vérifie toutes les 30 secondes
+python match_pending.py --loop 30
+```
+
+Vérifier le résultat :
+
+```bash
+sqlite3 storage/bets.db "SELECT status, COUNT(*) FROM bets GROUP BY status;"
+sqlite3 storage/bets.db "SELECT id, team_1, team_2, status, confirmed_payout FROM bets WHERE status='WON';"
+```
+
 ## Tests
 
 ```bash
 python tests/test_db.py
 python tests/test_image_analysis.py
 python tests/test_bet_router.py
+python tests/test_bet_matcher.py
 ```
 
-## Prochaine étape (Phase 4 — à valider avant de commencer)
+## Prochaine étape (Phase 5 — à valider avant de commencer)
 
-Relier chaque image `winning_bet` (actuellement laissée de côté par la
-Phase 3) à un pari `PENDING` existant dans `bets`, via un score de
-correspondance (équipes, marché, cote, montant...), conformément à la
-section 9 du cahier des charges. Cas particulier à bien gérer : le même
-pari peut être placé deux fois par le tipster (mentionné par l'utilisateur),
-donc plusieurs paris `PENDING` peuvent être candidats pour une même image
-gagnante — il faudra une règle de départage claire.
+Marquer automatiquement un pari `PENDING` comme `LOST` après un délai de
+sécurité configurable, si aucune image `winning_bet` n'a pu lui être
+associée (règle 6, section 13). C'est la dernière étape avant de pouvoir
+calculer des statistiques fiables (Phase 6), car sans ça, les paris perdus
+resteraient indéfiniment "en attente".
