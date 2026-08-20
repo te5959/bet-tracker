@@ -69,9 +69,21 @@ d'abord la fiabilité de l'extraction sur des images réelles du groupe.
   plus **ancien** est choisi — testé explicitement
   (`tests/test_bet_matcher.py::test_duplicate_bet_tiebreak_oldest_wins`).
 
+### Phase 5 — Expiration des paris (prête, à valider en conditions réelles)
+
+- passe automatiquement en `LOST` tout pari `PENDING` détecté depuis plus
+  de **24h** (délai configurable) sans confirmation de gain associée
+  (règle 6, section 13) ;
+- basé sur `detected_at` (heure de détection par le système), pas sur
+  l'heure de l'événement extraite par l'IA — plus robuste, cette dernière
+  étant souvent absente ou peu fiable ;
+- **ne touche jamais** les paris `MANUAL_REVIEW` (ils restent en attente
+  d'un regard humain) ni les paris déjà `WON` ;
+- vérification peu fréquente (toutes les heures) : pas besoin de plus,
+  le délai lui-même est de 24h.
+
 Ce que le code **ne fait pas encore** :
 
-- aucune détection de perte par délai (Phase 5) ;
 - aucune statistique (Phase 6) ;
 - **aucune automatisation de paris** (hors scope V1, section 21).
 
@@ -166,23 +178,26 @@ cas de crash — comme le fait déjà le listener Phase 1 :
 bash deploy/install_pipeline_services.sh
 ```
 
-Cela installe et démarre 3 nouveaux services :
+Cela installe et démarre 4 nouveaux services (ou utilisez
+`deploy/install_expire_service.sh` seul si les 3 premiers tournent déjà) :
 
 | Service | Rôle | Fréquence |
 |---|---|---|
 | `bet-tracker-analyze` | Phase 2 : analyse IA des nouvelles images | vérifie toutes les 30s |
 | `bet-tracker-route` | Phase 3 : création des paris | vérifie toutes les 30s |
 | `bet-tracker-match` | Phase 4 : matching des gains | vérifie toutes les 30s |
+| `bet-tracker-expire` | Phase 5 : expiration des paris trop anciens | vérifie 1x/heure |
 
 Avec `bet-tracker` (Phase 1, déjà actif), le pipeline complet tourne alors
 de bout en bout automatiquement : une image publiée dans le groupe est
-capturée, analysée, transformée en pari, et matchée à sa confirmation de
-gain, sans aucune intervention manuelle.
+capturée, analysée, transformée en pari, matchée à sa confirmation de gain
+si elle existe, ou marquée perdue après 24h sans confirmation — sans
+aucune intervention manuelle.
 
 Vérifier que tout tourne :
 
 ```bash
-systemctl status bet-tracker bet-tracker-analyze bet-tracker-route bet-tracker-match
+systemctl status bet-tracker bet-tracker-analyze bet-tracker-route bet-tracker-match bet-tracker-expire
 tail -f logs/pipeline.log
 ```
 
@@ -208,6 +223,26 @@ sqlite3 storage/bets.db "SELECT status, COUNT(*) FROM bets GROUP BY status;"
 sqlite3 storage/bets.db "SELECT id, team_1, team_2, status, confirmed_payout FROM bets WHERE status='WON';"
 ```
 
+## Lancer l'expiration des paris (Phase 5)
+
+```bash
+# Délai par défaut (24h)
+python expire_pending.py
+
+# Délai personnalisé
+python expire_pending.py --hours 12
+
+# Tourne en continu (vérifie 1x/heure)
+python expire_pending.py --loop 3600
+```
+
+Vérifier le résultat :
+
+```bash
+sqlite3 storage/bets.db "SELECT status, COUNT(*) FROM bets GROUP BY status;"
+sqlite3 storage/bets.db "SELECT id, team_1, team_2, detected_at FROM bets WHERE status='LOST';"
+```
+
 ## Tests
 
 ```bash
@@ -215,12 +250,12 @@ python tests/test_db.py
 python tests/test_image_analysis.py
 python tests/test_bet_router.py
 python tests/test_bet_matcher.py
+python tests/test_bet_expiry.py
 ```
 
-## Prochaine étape (Phase 5 — à valider avant de commencer)
+## Prochaine étape (Phase 6 — à valider avant de commencer)
 
-Marquer automatiquement un pari `PENDING` comme `LOST` après un délai de
-sécurité configurable, si aucune image `winning_bet` n'a pu lui être
-associée (règle 6, section 13). C'est la dernière étape avant de pouvoir
-calculer des statistiques fiables (Phase 6), car sans ça, les paris perdus
-resteraient indéfiniment "en attente".
+Calculer automatiquement les statistiques (section 14) : total de paris,
+gagnants/perdants, taux de réussite, résultats financiers, statistiques par
+période — puis les rendre accessibles via un bot Telegram qui t'envoie un
+résumé à la demande ou automatiquement chaque jour.

@@ -351,3 +351,37 @@ def mark_bet_won(
             (winning_image_id, confirmed_payout, bet_id),
         )
         conn.commit()
+
+
+# --- Phase 5 : détection des paris perdus par délai ---
+
+def get_expirable_bets(db_path: Path, delay_hours: int):
+    """Retourne les paris PENDING détectés il y a plus de `delay_hours`
+    heures, encore sans confirmation de gain (règle 6, section 13).
+    Ne touche pas MANUAL_REVIEW : ces paris restent en attente d'un
+    regard humain plutôt que d'être basculés automatiquement."""
+    with get_connection(db_path) as conn:
+        rows = conn.execute(
+            """
+            SELECT id, team_1, team_2, detected_at
+            FROM bets
+            WHERE status = 'PENDING'
+              AND detected_at <= datetime('now', ?)
+            ORDER BY id ASC
+            """,
+            (f"-{delay_hours} hours",),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+
+def mark_bet_lost(db_path: Path, bet_id: int) -> None:
+    with get_connection(db_path) as conn:
+        conn.execute(
+            """
+            UPDATE bets
+            SET status = 'LOST', updated_at = datetime('now')
+            WHERE id = ?
+            """,
+            (bet_id,),
+        )
+        conn.commit()
