@@ -82,10 +82,23 @@ d'abord la fiabilité de l'extraction sur des images réelles du groupe.
 - vérification peu fréquente (toutes les heures) : pas besoin de plus,
   le délai lui-même est de 24h.
 
-Ce que le code **ne fait pas encore** :
+### Phase 6 — Statistiques + Bot Telegram (prête, à valider en conditions réelles)
 
-- aucune statistique (Phase 6) ;
-- **aucune automatisation de paris** (hors scope V1, section 21).
+- calcule les statistiques de la section 14 : total, gagnés, perdus, en
+  attente, à vérifier, taux de réussite, finances (misé/encaissé/bénéfice
+  sur les paris résolus uniquement), et répartition par période (jour /
+  7 jours / mois) ;
+- un **bot Telegram séparé** (via @BotFather, pas le compte utilisateur de
+  la Phase 1) envoie ce résumé de deux façons :
+  - **à la demande** : commande `/stats` envoyée au bot ;
+  - **automatiquement** : chaque jour à une heure configurable
+    (`DAILY_STATS_HOUR`, 8h par défaut) ;
+- le bot **ignore tout message** venant d'un autre utilisateur que
+  `TELEGRAM_BOT_OWNER_ID` — usage strictement personnel.
+
+C'est la dernière brique de la V1 (section 22-23 du cahier des charges) :
+observer → comprendre → mesurer → analyser, sans aucune automatisation de
+paris (hors scope, section 21).
 
 ## Installation
 
@@ -243,6 +256,22 @@ sqlite3 storage/bets.db "SELECT status, COUNT(*) FROM bets GROUP BY status;"
 sqlite3 storage/bets.db "SELECT id, team_1, team_2, detected_at FROM bets WHERE status='LOST';"
 ```
 
+## Configurer et lancer le bot Telegram (Phase 6)
+
+1. Créer un bot via `@BotFather` sur Telegram (`/newbot`), récupérer le token.
+2. Récupérer ton ID Telegram numérique personnel (ex: via `@userinfobot`).
+3. Envoyer `/start` à ton nouveau bot (obligatoire — un bot ne peut pas
+   initier une conversation sur Telegram).
+4. Remplir dans `.env` : `TELEGRAM_BOT_TOKEN`, `TELEGRAM_BOT_OWNER_ID`,
+   `DAILY_STATS_HOUR` (optionnel, 8 par défaut).
+5. Lancer :
+
+```bash
+python run_bot.py
+```
+
+Puis, sur Telegram, envoie `/stats` à ton bot pour tester.
+
 ## Tests
 
 ```bash
@@ -251,11 +280,27 @@ python tests/test_image_analysis.py
 python tests/test_bet_router.py
 python tests/test_bet_matcher.py
 python tests/test_bet_expiry.py
+python tests/test_stats.py
 ```
 
-## Prochaine étape (Phase 6 — à valider avant de commencer)
+## Automatiser le bot en continu
 
-Calculer automatiquement les statistiques (section 14) : total de paris,
-gagnants/perdants, taux de réussite, résultats financiers, statistiques par
-période — puis les rendre accessibles via un bot Telegram qui t'envoie un
-résumé à la demande ou automatiquement chaque jour.
+```bash
+bash deploy/install_bot_service.sh
+```
+
+Avec ça, les **6 services** (Phase 1 à 6) tournent en continu :
+
+```bash
+systemctl status bet-tracker bet-tracker-analyze bet-tracker-route bet-tracker-match bet-tracker-expire bet-tracker-bot
+```
+
+## V1 complète
+
+Toutes les phases du cahier des charges sont maintenant en place (sections
+18 et 22-23) : capture, lecture, classification, matching, expiration, et
+statistiques accessibles via Telegram. Comme précisé section 24, la
+priorité a été la fiabilité de la lecture et du suivi — toute évolution
+future (analyse historique avancée, automatisation des mises) reste
+volontairement hors de cette V1 et ne doit être envisagée qu'après une
+période de validation en conditions réelles sur des données propres.

@@ -44,8 +44,15 @@ class Settings:
     anthropic_api_key: str
     anthropic_model: str
 
+    # Phase 6 : bot Telegram (optionnel — seul run_bot.py en a besoin)
+    telegram_bot_token: str | None
+    telegram_bot_owner_id: int | None
+    telegram_bot_session_name: str
+    daily_stats_hour: int
+
 
 def load_settings() -> Settings:
+    bot_owner_id_raw = os.environ.get("TELEGRAM_BOT_OWNER_ID")
     return Settings(
         telegram_api_id=int(_require("TELEGRAM_API_ID")),
         telegram_api_hash=_require("TELEGRAM_API_HASH"),
@@ -60,4 +67,10 @@ def load_settings() -> Settings:
         anthropic_model=os.environ.get(
             "ANTHROPIC_MODEL", "claude-haiku-4-5-20251001"
         ),
+        telegram_bot_token=os.environ.get("TELEGRAM_BOT_TOKEN"),
+        telegram_bot_owner_id=int(bot_owner_id_raw) if bot_owner_id_raw else None,
+        telegram_bot_session_name=os.environ.get(
+            "TELEGRAM_BOT_SESSION_NAME", "bet_tracker_bot_session"
+        ),
+        daily_stats_hour=int(os.environ.get("DAILY_STATS_HOUR", "8")),
     )
