@@ -90,6 +90,14 @@ def init_db(db_path: Path) -> None:
     with sqlite3.connect(db_path) as conn:
         conn.executescript(SCHEMA)
         conn.commit()
+        # Migration douce : ajoute la colonne routed_at si elle n'existe pas
+        # encore (bases créées avant la Phase 3). SQLite ne supporte pas
+        # "ADD COLUMN IF NOT EXISTS", d'où le try/except.
+        try:
+            conn.execute("ALTER TABLE image_analysis ADD COLUMN routed_at TEXT")
+            conn.commit()
+        except sqlite3.OperationalError:
+            pass  # colonne déjà présente
 
 
 @contextmanager
@@ -190,3 +198,89 @@ def save_image_analysis(
         )
         conn.commit()
         return cur.lastrowid
+
+
+# --- Phase 3 : routage des analyses vers la création de paris ---
+
+def get_unrouted_analyses(db_path: Path, limit: int = 20):
+    """Retourne les analyses réussies (error IS NULL) pas encore routées
+    (routed_at IS NULL), les plus anciennes en premier. Une analyse en échec
+    n'a rien à router : elle doit d'abord être réanalysée (cf. Phase 2)."""
+    with get_connection(db_path) as conn:
+        rows = conn.execute(
+            """
+            SELECT id, raw_image_id, image_type, confidence, extracted_json
+            FROM image_analysis
+            WHERE routed_at IS NULL AND error IS NULL
+            ORDER BY id ASC
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+
+def mark_analysis_routed(db_path: Path, analysis_id: int) -> None:
+    with get_connection(db_path) as conn:
+        conn.execute(
+            "UPDATE image_analysis SET routed_at = datetime('now') WHERE id = ?",
+            (analysis_id,),
+        )
+        conn.commit()
+
+
+def create_bet(
+    db_path: Path,
+    telegram_message_id: int | None,
+    original_image_id: int,
+    team_1: str | None,
+    team_2: str | None,
+    competition: str | None,
+    event_date: str | None,
+    event_time: str | None,
+    market: str | None,
+    selection: str | None,
+    odds: float | None,
+    stake: float | None,
+    potential_return: float | None,
+    status: str,
+    confidence: float | None,
+) -> int:
+    """Crée un nouveau pari (section 10 du cahier des charges).
+    Statut attendu ici : PENDING ou MANUAL_REVIEW (jamais WON/LOST, qui
+    relèvent des Phases 4 et 5)."""
+    with get_connection(db_path) as conn:
+        cur = conn.execute(
+            """
+            INSERT INTO bets (
+                telegram_message_id, original_image_id,
+                team_1, team_2, competition, event_date, event_time,
+                market, selection, odds, stake, potential_return,
+                status, confidence
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                telegram_message_id, original_image_id,
+                team_1, team_2, competition, event_date, event_time,
+                market, selection, odds, stake, potential_return,
+                status, confidence,
+            ),
+        )
+        conn.commit()
+        return cur.lastrowid
+
+
+def get_raw_image(db_path: Path, raw_image_id: int) -> dict | None:
+    with get_connection(db_path) as conn:
+        row = conn.execute(
+            "SELECT * FROM raw_images WHERE id = ?", (raw_image_id,)
+        ).fetchone()
+        return dict(row) if row else None
+
+
+def count_bets_by_status(db_path: Path) -> dict:
+    with get_connection(db_path) as conn:
+        rows = conn.execute(
+            "SELECT status, COUNT(*) AS c FROM bets GROUP BY status"
+        ).fetchall()
+        return {row["status"]: row["c"] for row in rows}
