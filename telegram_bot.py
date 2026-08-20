@@ -26,8 +26,8 @@ from datetime import datetime, timedelta
 from telethon import TelegramClient, events
 
 from config import Settings
-from db import init_db
-from stats import compute_statistics, format_stats_message
+from db import init_db, get_recent_bets
+from stats import compute_statistics, format_stats_message, format_bets_table
 from pipeline_logger import setup_logger
 
 
@@ -90,7 +90,8 @@ async def run_bot(settings: Settings) -> None:
             return  # ignore silencieusement tout autre utilisateur
         await event.respond(
             "👋 Bot Bet Tracker connecté !\n\n"
-            "Envoie /stats à tout moment pour voir le résumé actuel.\n"
+            "/stats — résumé complet des statistiques\n"
+            "/bets — tableau détaillé des derniers paris\n\n"
             f"Un résumé automatique t'est aussi envoyé chaque jour à {settings.daily_stats_hour}h."
         )
 
@@ -101,6 +102,15 @@ async def run_bot(settings: Settings) -> None:
         stats = compute_statistics(settings.db_path)
         await event.respond(format_stats_message(stats))
         logger.info("Statistiques envoyées à la demande")
+
+    @client.on(events.NewMessage(pattern="/bets"))
+    async def bets_handler(event):
+        if event.sender_id != settings.telegram_bot_owner_id:
+            return
+        recent_bets = get_recent_bets(settings.db_path, limit=30)
+        table = format_bets_table(recent_bets)
+        await event.respond(table, parse_mode="markdown")
+        logger.info("Tableau des paris envoyé à la demande")
 
     asyncio.create_task(_daily_stats_loop(client, settings, logger))
 

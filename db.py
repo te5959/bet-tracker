@@ -385,3 +385,22 @@ def mark_bet_lost(db_path: Path, bet_id: int) -> None:
             (bet_id,),
         )
         conn.commit()
+
+
+# --- Phase 6 : lecture pour le tableau détaillé (commande /bets) ---
+
+def get_recent_bets(db_path: Path, limit: int = 30):
+    """Retourne les paris les plus récents en premier, pour affichage
+    détaillé (commande /bets du bot)."""
+    with get_connection(db_path) as conn:
+        rows = conn.execute(
+            """
+            SELECT id, team_1, team_2, market, odds, stake, potential_return,
+                   confirmed_payout, status, detected_at
+            FROM bets
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+        return [dict(row) for row in rows]

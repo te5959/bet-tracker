@@ -84,15 +84,22 @@ d'abord la fiabilité de l'extraction sur des images réelles du groupe.
 
 ### Phase 6 — Statistiques + Bot Telegram (prête, à valider en conditions réelles)
 
-- calcule les statistiques de la section 14 : total, gagnés, perdus, en
-  attente, à vérifier, taux de réussite, finances (misé/encaissé/bénéfice
-  sur les paris résolus uniquement), et répartition par période (jour /
-  7 jours / mois) ;
+- calcule les statistiques de la section 14, enrichies :
+  - comptages (total, gagnés, perdus, en attente, à vérifier), taux de réussite ;
+  - **deux calculs de bénéfice** : normal (paris résolus uniquement) et
+    **conservateur** (les paris encore `PENDING` sont en plus comptés comme
+    entièrement perdus — scénario prudent) ;
+  - ROI (%) pour les deux scénarios ;
+  - cote moyenne, mise moyenne, meilleur gain, plus grosse perte ;
+  - répartition par période (jour / 7 jours / mois) ;
 - un **bot Telegram séparé** (via @BotFather, pas le compte utilisateur de
-  la Phase 1) envoie ce résumé de deux façons :
-  - **à la demande** : commande `/stats` envoyée au bot ;
-  - **automatiquement** : chaque jour à une heure configurable
-    (`DAILY_STATS_HOUR`, 8h par défaut) ;
+  la Phase 1) répond à :
+  - `/stats` — résumé complet ci-dessus, à la demande ;
+  - `/bets` — tableau détaillé des paris les plus récents (jusqu'à 30,
+    tronqué proprement si la limite de taille des messages Telegram est
+    atteinte) ;
+  - envoi **automatique quotidien** du résumé `/stats` à une heure
+    configurable (`DAILY_STATS_HOUR`, 8h par défaut) ;
 - le bot **ignore tout message** venant d'un autre utilisateur que
   `TELEGRAM_BOT_OWNER_ID` — usage strictement personnel.
 
@@ -270,7 +277,8 @@ sqlite3 storage/bets.db "SELECT id, team_1, team_2, detected_at FROM bets WHERE 
 python run_bot.py
 ```
 
-Puis, sur Telegram, envoie `/stats` à ton bot pour tester.
+Puis, sur Telegram, envoie `/stats` à ton bot pour tester, et `/bets` pour
+voir le tableau détaillé des paris récents.
 
 ## Tests
 
