@@ -109,6 +109,12 @@ d'abord la fiabilité de l'extraction sur des images réelles du groupe.
     - `/bets week` — 7 derniers jours ;
     - `/bets month` — ce mois-ci ;
     - `/bets 2026-08-19` — un jour précis ;
+  - `/graph` — menu interactif à boutons (aucune commande à taper) :
+    1. choix du type de graphique (Bénéfice cumulé / Taux de réussite /
+       Volume de paris / Mise vs Gains) ;
+    2. choix de l'unité (Jour / Semaine / Mois) ;
+    3. choix de la période (1 jour → 1 an) ;
+    → génère et envoie un graphique PNG (matplotlib) ;
   - envoi **automatique quotidien** du résumé `/stats` à une heure
     configurable (`DAILY_STATS_HOUR`, 8h par défaut) ;
 - le bot **ignore tout message** venant d'un autre utilisateur que
@@ -288,9 +294,9 @@ sqlite3 storage/bets.db "SELECT id, team_1, team_2, detected_at FROM bets WHERE 
 python run_bot.py
 ```
 
-Puis, sur Telegram, envoie `/stats` à ton bot pour tester, et `/bets`,
+Puis, sur Telegram, envoie `/stats` à ton bot pour tester, `/bets`,
 `/bets today`, `/bets week`, `/bets month` ou `/bets AAAA-MM-JJ` pour le
-détail par période.
+détail par période, et `/graph` pour le menu interactif de graphiques.
 
 ## Tests
 
@@ -301,6 +307,7 @@ python tests/test_bet_router.py
 python tests/test_bet_matcher.py
 python tests/test_bet_expiry.py
 python tests/test_stats.py
+python tests/test_charts.py
 ```
 
 ## Automatiser le bot en continu

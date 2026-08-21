@@ -23,7 +23,7 @@ conversation).
 import asyncio
 from datetime import datetime, timedelta
 
-from telethon import TelegramClient, events
+from telethon import TelegramClient, events, Button
 
 from config import Settings
 from db import init_db
@@ -33,6 +33,14 @@ from stats import (
     compute_bets_period_summary,
     format_period_summary_message,
     resolve_period,
+)
+from charts import (
+    aggregate_bets_by_unit,
+    period_code_to_since,
+    render_chart,
+    CHART_RENDERERS,
+    PERIOD_CHOICES,
+    UNIT_LABELS,
 )
 from pipeline_logger import setup_logger
 
@@ -101,7 +109,9 @@ async def run_bot(settings: Settings) -> None:
             "/bets today — paris d'aujourd'hui\n"
             "/bets week — 7 derniers jours\n"
             "/bets month — ce mois-ci\n"
-            "/bets 2026-08-19 — un jour précis\n\n"
+            "/bets 2026-08-19 — un jour précis\n"
+            "/graph — graphiques interactifs (bénéfice, taux de réussite, "
+            "volume, mise vs gains)\n\n"
             f"Un résumé automatique t'est aussi envoyé chaque jour à {settings.daily_stats_hour}h."
         )
 
@@ -133,6 +143,102 @@ async def run_bot(settings: Settings) -> None:
         message = format_period_summary_message(summary, label)
         await event.respond(message, parse_mode="markdown")
         logger.info("Tableau des paris envoyé à la demande (période: %s)", label)
+
+    # État de navigation du menu /graph, en mémoire (un seul utilisateur autorisé).
+    graph_navigation_state: dict[int, dict] = {}
+
+    def _graph_type_buttons():
+        return [
+            [Button.inline(label, f"graph_type:{code}".encode())]
+            for code, (_, label) in CHART_RENDERERS.items()
+        ] + [[Button.inline("❌ Annuler", b"cancel")]]
+
+    def _unit_buttons():
+        return [
+            [Button.inline("Jour", b"unit:day"), Button.inline("Semaine", b"unit:week"), Button.inline("Mois", b"unit:month")],
+            [Button.inline("◀️ Retour", b"back:type")],
+        ]
+
+    def _period_buttons():
+        row1 = [Button.inline(label, f"period:{code}".encode()) for code, (label, _) in list(PERIOD_CHOICES.items())[:3]]
+        row2 = [Button.inline(label, f"period:{code}".encode()) for code, (label, _) in list(PERIOD_CHOICES.items())[3:]]
+        return [row1, row2, [Button.inline("◀️ Retour", b"back:unit")]]
+
+    @client.on(events.NewMessage(pattern="/graph"))
+    async def graph_handler(event):
+        if event.sender_id != settings.telegram_bot_owner_id:
+            return
+        graph_navigation_state[event.sender_id] = {}
+        await event.respond("📈 Choisis un type de graphique :", buttons=_graph_type_buttons())
+
+    @client.on(events.CallbackQuery)
+    async def callback_handler(event):
+        if event.sender_id != settings.telegram_bot_owner_id:
+            await event.answer()
+            return
+
+        data = event.data.decode()
+
+        if data == "cancel":
+            graph_navigation_state.pop(event.sender_id, None)
+            await event.edit("Annulé.")
+            await event.answer()
+            return
+
+        if data.startswith("graph_type:"):
+            graph_type = data.split(":", 1)[1]
+            graph_navigation_state[event.sender_id] = {"type": graph_type}
+            await event.edit("Choisis l'unité d'agrégation :", buttons=_unit_buttons())
+            await event.answer()
+            return
+
+        if data.startswith("unit:"):
+            unit = data.split(":", 1)[1]
+            state = graph_navigation_state.setdefault(event.sender_id, {})
+            state["unit"] = unit
+            await event.edit("Choisis la période :", buttons=_period_buttons())
+            await event.answer()
+            return
+
+        if data.startswith("period:"):
+            period_code = data.split(":", 1)[1]
+            state = graph_navigation_state.get(event.sender_id)
+
+            if not state or "type" not in state or "unit" not in state:
+                await event.answer("Session expirée, relance /graph", alert=True)
+                return
+
+            since, period_label = period_code_to_since(period_code)
+            buckets = aggregate_bets_by_unit(settings.db_path, state["unit"], since=since)
+            image_buf = render_chart(state["type"], buckets, state["unit"])
+
+            if image_buf is None:
+                await event.answer("Aucune donnée pour cette période.", alert=True)
+                return
+
+            await event.answer()
+            _, type_label = CHART_RENDERERS[state["type"]]
+            caption = f"{type_label} — {UNIT_LABELS[state['unit']]} — {period_label}"
+            await event.respond(file=image_buf, message=caption)
+            await event.edit("✅ Graphique envoyé ci-dessus. Utilise /graph pour en refaire un.")
+            graph_navigation_state.pop(event.sender_id, None)
+            logger.info("Graphique envoyé : %s", caption)
+            return
+
+        if data == "back:type":
+            graph_navigation_state[event.sender_id] = {}
+            await event.edit("📈 Choisis un type de graphique :", buttons=_graph_type_buttons())
+            await event.answer()
+            return
+
+        if data == "back:unit":
+            state = graph_navigation_state.get(event.sender_id, {})
+            state.pop("unit", None)
+            await event.edit("Choisis l'unité d'agrégation :", buttons=_unit_buttons())
+            await event.answer()
+            return
+
+        await event.answer()
 
     asyncio.create_task(_daily_stats_loop(client, settings, logger))
 
