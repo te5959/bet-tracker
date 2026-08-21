@@ -98,21 +98,25 @@ async def run_bot(settings: Settings) -> None:
     await client.start(bot_token=settings.telegram_bot_token)
     logger.info("Bot Telegram démarré")
 
+    def _main_menu_buttons():
+        return [
+            [Button.inline("📊 Statistiques", b"menu:stats")],
+            [Button.inline("📋 Paris", b"menu:bets")],
+            [Button.inline("📈 Graphiques", b"menu:graph")],
+        ]
+
+    def _back_to_menu_row():
+        return [Button.inline("🏠 Menu", b"menu:root")]
+
     @client.on(events.NewMessage(pattern="/start"))
     async def start_handler(event):
         if event.sender_id != settings.telegram_bot_owner_id:
             return  # ignore silencieusement tout autre utilisateur
         await event.respond(
-            "👋 Bot Bet Tracker connecté !\n\n"
-            "/stats — résumé complet des statistiques\n"
-            "/bets — derniers paris (avec totaux)\n"
-            "/bets today — paris d'aujourd'hui\n"
-            "/bets week — 7 derniers jours\n"
-            "/bets month — ce mois-ci\n"
-            "/bets 2026-08-19 — un jour précis\n"
-            "/graph — graphiques interactifs (bénéfice, taux de réussite, "
-            "volume, mise vs gains)\n\n"
-            f"Un résumé automatique t'est aussi envoyé chaque jour à {settings.daily_stats_hour}h."
+            "👋 Bot Bet Tracker connecté !\n\nQue veux-tu voir ?\n\n"
+            "(Astuce : /stats, /bets et /graph fonctionnent aussi directement "
+            "si tu préfères taper.)",
+            buttons=_main_menu_buttons(),
         )
 
     @client.on(events.NewMessage(pattern="/stats"))
@@ -120,7 +124,7 @@ async def run_bot(settings: Settings) -> None:
         if event.sender_id != settings.telegram_bot_owner_id:
             return
         stats = compute_statistics(settings.db_path)
-        await event.respond(format_stats_message(stats))
+        await event.respond(format_stats_message(stats), buttons=[_back_to_menu_row()])
         logger.info("Statistiques envoyées à la demande")
 
     @client.on(events.NewMessage(pattern=r"/bets(?:\s+(.+))?"))
@@ -141,7 +145,7 @@ async def run_bot(settings: Settings) -> None:
         limit = 30 if not arg else 200  # période précise : on ne limite pas artificiellement
         summary = compute_bets_period_summary(settings.db_path, since=since, until=until, limit=limit)
         message = format_period_summary_message(summary, label)
-        await event.respond(message, parse_mode="markdown")
+        await event.respond(message, parse_mode="markdown", buttons=[_back_to_menu_row()])
         logger.info("Tableau des paris envoyé à la demande (période: %s)", label)
 
     # État de navigation du menu /graph, en mémoire (un seul utilisateur autorisé).
@@ -151,18 +155,25 @@ async def run_bot(settings: Settings) -> None:
         return [
             [Button.inline(label, f"graph_type:{code}".encode())]
             for code, (_, label) in CHART_RENDERERS.items()
-        ] + [[Button.inline("❌ Annuler", b"cancel")]]
+        ] + [_back_to_menu_row()]
 
     def _unit_buttons():
         return [
             [Button.inline("Jour", b"unit:day"), Button.inline("Semaine", b"unit:week"), Button.inline("Mois", b"unit:month")],
-            [Button.inline("◀️ Retour", b"back:type")],
+            [Button.inline("◀️ Retour", b"back:type"), *_back_to_menu_row()],
         ]
 
     def _period_buttons():
         row1 = [Button.inline(label, f"period:{code}".encode()) for code, (label, _) in list(PERIOD_CHOICES.items())[:3]]
         row2 = [Button.inline(label, f"period:{code}".encode()) for code, (label, _) in list(PERIOD_CHOICES.items())[3:]]
-        return [row1, row2, [Button.inline("◀️ Retour", b"back:unit")]]
+        return [row1, row2, [Button.inline("◀️ Retour", b"back:unit"), *_back_to_menu_row()]]
+
+    def _bets_period_buttons():
+        return [
+            [Button.inline("Aujourd'hui", b"bets_period:today"), Button.inline("Semaine", b"bets_period:week")],
+            [Button.inline("Mois", b"bets_period:month"), Button.inline("Tout", b"bets_period:all")],
+            _back_to_menu_row(),
+        ]
 
     @client.on(events.NewMessage(pattern="/graph"))
     async def graph_handler(event):
@@ -179,9 +190,42 @@ async def run_bot(settings: Settings) -> None:
 
         data = event.data.decode()
 
-        if data == "cancel":
+        if data in ("cancel", "menu:root"):
             graph_navigation_state.pop(event.sender_id, None)
-            await event.edit("Annulé.")
+            await event.edit("🏠 Menu principal — que veux-tu voir ?", buttons=_main_menu_buttons())
+            await event.answer()
+            return
+
+        if data == "menu:stats":
+            stats = compute_statistics(settings.db_path)
+            await event.edit(format_stats_message(stats), buttons=[_back_to_menu_row()])
+            await event.answer()
+            logger.info("Statistiques envoyées via le menu")
+            return
+
+        if data == "menu:bets":
+            await event.edit("📋 Choisis une période :", buttons=_bets_period_buttons())
+            await event.answer()
+            return
+
+        if data.startswith("bets_period:"):
+            code = data.split(":", 1)[1]
+            if code == "all":
+                since, until, label = None, None, "Tous les paris"
+                limit = 30
+            else:
+                since, until, label = resolve_period(code)
+                limit = 200
+            summary = compute_bets_period_summary(settings.db_path, since=since, until=until, limit=limit)
+            message = format_period_summary_message(summary, label)
+            await event.edit(message, parse_mode="markdown", buttons=[_back_to_menu_row()])
+            await event.answer()
+            logger.info("Tableau des paris envoyé via le menu (période: %s)", label)
+            return
+
+        if data == "menu:graph":
+            graph_navigation_state[event.sender_id] = {}
+            await event.edit("📈 Choisis un type de graphique :", buttons=_graph_type_buttons())
             await event.answer()
             return
 
@@ -205,7 +249,7 @@ async def run_bot(settings: Settings) -> None:
             state = graph_navigation_state.get(event.sender_id)
 
             if not state or "type" not in state or "unit" not in state:
-                await event.answer("Session expirée, relance /graph", alert=True)
+                await event.answer("Session expirée, relance /graph ou le menu", alert=True)
                 return
 
             since, period_label = period_code_to_since(period_code)
@@ -220,7 +264,7 @@ async def run_bot(settings: Settings) -> None:
             _, type_label = CHART_RENDERERS[state["type"]]
             caption = f"{type_label} — {UNIT_LABELS[state['unit']]} — {period_label}"
             await event.respond(file=image_buf, message=caption)
-            await event.edit("✅ Graphique envoyé ci-dessus. Utilise /graph pour en refaire un.")
+            await event.edit("✅ Graphique envoyé ci-dessus.", buttons=[_back_to_menu_row()])
             graph_navigation_state.pop(event.sender_id, None)
             logger.info("Graphique envoyé : %s", caption)
             return

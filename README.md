@@ -100,21 +100,15 @@ d'abord la fiabilité de l'extraction sur des images réelles du groupe.
   - cote moyenne, mise moyenne, meilleur gain, plus grosse perte ;
   - répartition par période (jour / 7 jours / mois) ;
 - un **bot Telegram séparé** (via @BotFather, pas le compte utilisateur de
-  la Phase 1) répond à :
-  - `/stats` — résumé complet ci-dessus, à la demande ;
-  - `/bets` — tableau détaillé des paris avec totaux (gains encaissés,
-    bénéfice normal et conservateur), filtrable par période :
-    - `/bets` — derniers paris (30 max) ;
-    - `/bets today` — paris d'aujourd'hui ;
-    - `/bets week` — 7 derniers jours ;
-    - `/bets month` — ce mois-ci ;
-    - `/bets 2026-08-19` — un jour précis ;
-  - `/graph` — menu interactif à boutons (aucune commande à taper) :
-    1. choix du type de graphique (Bénéfice cumulé / Taux de réussite /
-       Volume de paris / Mise vs Gains) ;
-    2. choix de l'unité (Jour / Semaine / Mois) ;
-    3. choix de la période (1 jour → 1 an) ;
-    → génère et envoie un graphique PNG (matplotlib) ;
+  la Phase 1) propose un **menu principal 100% par boutons** (`/start`) :
+  `[📊 Statistiques] [📋 Paris] [📈 Graphiques]`, avec un bouton
+  `🏠 Menu` pour revenir en un clic depuis n'importe quel écran ;
+  - **Statistiques** → résumé complet, directement ;
+  - **Paris** → boutons de période (Aujourd'hui / Semaine / Mois / Tout) →
+    tableau détaillé avec totaux ;
+  - **Graphiques** → type → unité → période → image envoyée ;
+  - les commandes texte (`/stats`, `/bets [période]`, `/graph`) continuent
+    de fonctionner en parallèle pour qui préfère taper ;
   - envoi **automatique quotidien** du résumé `/stats` à une heure
     configurable (`DAILY_STATS_HOUR`, 8h par défaut) ;
 - le bot **ignore tout message** venant d'un autre utilisateur que
