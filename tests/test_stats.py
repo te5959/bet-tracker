@@ -11,7 +11,14 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from db import init_db, insert_raw_image, create_bet, mark_bet_won, get_recent_bets, get_connection
-from stats import compute_statistics, format_stats_message, format_bets_table
+from stats import (
+    compute_statistics,
+    format_stats_message,
+    format_bets_table,
+    resolve_period,
+    compute_bets_period_summary,
+    format_period_summary_message,
+)
 
 
 def _make_pending(db_path, image_id, stake, potential_return, odds=1.9, team_1="A", team_2="B"):
@@ -139,7 +146,81 @@ def test_bets_table_and_recent_bets():
     print("OK - test_bets_table_and_recent_bets")
 
 
+def test_resolve_period():
+    # aucun argument -> pas de filtre
+    since, until, label = resolve_period(None)
+    assert since is None and until is None and label == "Derniers paris"
+
+    # today -> since = minuit aujourd'hui, until=None
+    since, until, label = resolve_period("today")
+    assert since is not None and until is None and label == "Aujourd'hui"
+    assert since.endswith("00:00:00")
+
+    # week
+    since, until, label = resolve_period("week")
+    assert since is not None and label == "7 derniers jours"
+
+    # month
+    since, until, label = resolve_period("month")
+    assert since is not None and label == "Ce mois-ci"
+
+    # date précise
+    since, until, label = resolve_period("2026-08-19")
+    assert since == "2026-08-19 00:00:00"
+    assert until == "2026-08-20 00:00:00"
+    assert label == "Le 2026-08-19"
+
+    # argument invalide -> label None (signal d'erreur pour le bot)
+    since, until, label = resolve_period("blabla")
+    assert label is None
+
+    print("OK - test_resolve_period")
+
+
+def test_compute_bets_period_summary():
+    with tempfile.TemporaryDirectory() as tmp:
+        db_path = Path(tmp) / "test.db"
+        init_db(db_path)
+
+        for i in range(1, 4):
+            insert_raw_image(db_path, telegram_message_id=i, telegram_date="2026-08-20T10:00:00", file_path=f"/tmp/{i}.jpg")
+
+        bet1 = _make_pending(db_path, 1, stake=100, potential_return=190, team_1="PSG", team_2="Lyon")
+        mark_bet_won(db_path, bet1, winning_image_id=1, confirmed_payout=190)
+
+        bet2 = _make_pending(db_path, 2, stake=50, potential_return=95, team_1="Real", team_2="Barca")
+        with get_connection(db_path) as conn:
+            conn.execute("UPDATE bets SET status='LOST' WHERE id=?", (bet2,))
+            conn.commit()
+
+        _make_pending(db_path, 3, stake=200, potential_return=400, team_1="Bayern", team_2="PSV")
+
+        # Sans filtre de date : les 3 paris
+        summary = compute_bets_period_summary(db_path)
+        assert summary["total"] == 3
+        assert summary["won"] == 1
+        assert summary["lost"] == 1
+        assert summary["pending"] == 1
+        assert summary["total_returned"] == 190
+        assert summary["profit_normal"] == 190 - (100 + 50)  # = 40
+        assert summary["profit_conservative"] == 40 - 200  # pending stake soustrait = -160
+
+        # Filtre sur une période future (aucun pari ne doit matcher)
+        future_summary = compute_bets_period_summary(db_path, since="2099-01-01 00:00:00")
+        assert future_summary["total"] == 0
+        assert future_summary["bets"] == []
+
+        message = format_period_summary_message(summary, "Test")
+        assert "PSG" in message
+        assert "Total gains" in message
+        assert "-160" in message
+
+    print("OK - test_compute_bets_period_summary")
+
+
 if __name__ == "__main__":
     test_compute_statistics_full()
     test_no_resolved_bets_yet()
     test_bets_table_and_recent_bets()
+    test_resolve_period()
+    test_compute_bets_period_summary()

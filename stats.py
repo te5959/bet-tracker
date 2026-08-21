@@ -33,6 +33,8 @@ Ce module est pur calcul, sans aucune dépendance à Telegram : testable
 indépendamment.
 """
 
+from datetime import datetime, timedelta
+
 from db import get_connection
 
 
@@ -235,3 +237,123 @@ def format_bets_table(bets: list, max_chars: int = 3500) -> str:
     if included < len(rows):
         result += f"\n({len(rows) - included} pari(s) plus ancien(s) non affiché(s))"
     return result
+
+
+# --- Filtrage par période pour la commande /bets ---
+
+def resolve_period(arg: str | None):
+    """Interprète l'argument de la commande /bets et retourne
+    (since, until, label). since/until sont des chaînes 'YYYY-MM-DD HH:MM:SS'
+    ou None. label=None signale un argument non reconnu.
+
+    Arguments acceptés : aucun (défaut), "today"/"aujourdhui", "week"/"semaine",
+    "month"/"mois", ou une date précise "AAAA-MM-JJ"."""
+    if not arg:
+        return None, None, "Derniers paris"
+
+    arg = arg.strip().lower()
+    now = datetime.now().replace(microsecond=0)
+
+    if arg in ("today", "aujourdhui", "aujourd'hui"):
+        since = now.replace(hour=0, minute=0, second=0)
+        return since.isoformat(sep=" "), None, "Aujourd'hui"
+
+    if arg in ("week", "semaine"):
+        since = now - timedelta(days=7)
+        return since.isoformat(sep=" "), None, "7 derniers jours"
+
+    if arg in ("month", "mois"):
+        since = now.replace(day=1, hour=0, minute=0, second=0)
+        return since.isoformat(sep=" "), None, "Ce mois-ci"
+
+    try:
+        day = datetime.strptime(arg, "%Y-%m-%d")
+        until = day + timedelta(days=1)
+        return day.isoformat(sep=" "), until.isoformat(sep=" "), f"Le {arg}"
+    except ValueError:
+        return None, None, None  # argument non reconnu
+
+
+def compute_bets_period_summary(db_path, since: str | None = None, until: str | None = None, limit: int = 200) -> dict:
+    """Retourne la liste des paris d'une période (plus récents en premier)
+    + les totaux financiers de cette même période (même logique que
+    compute_statistics : profit "normal" sur les paris résolus, et
+    "conservateur" en comptant en plus les paris PENDING comme perdus)."""
+    conditions = []
+    params = []
+    if since:
+        conditions.append("detected_at >= ?")
+        params.append(since)
+    if until:
+        conditions.append("detected_at < ?")
+        params.append(until)
+    where_clause = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+
+    with get_connection(db_path) as conn:
+        bets_rows = conn.execute(
+            f"""
+            SELECT id, team_1, team_2, market, odds, stake, potential_return,
+                   confirmed_payout, status, detected_at
+            FROM bets
+            {where_clause}
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (*params, limit),
+        ).fetchall()
+        bets = [dict(row) for row in bets_rows]
+
+        agg_row = conn.execute(
+            f"""
+            SELECT
+                COUNT(*) AS total,
+                SUM(CASE WHEN status='WON' THEN 1 ELSE 0 END) AS won,
+                SUM(CASE WHEN status='LOST' THEN 1 ELSE 0 END) AS lost,
+                SUM(CASE WHEN status='PENDING' THEN 1 ELSE 0 END) AS pending,
+                COALESCE(SUM(CASE WHEN status IN ('WON','LOST') THEN stake END), 0) AS total_staked,
+                COALESCE(SUM(CASE WHEN status='WON'
+                                   THEN COALESCE(confirmed_payout, potential_return) END), 0) AS total_returned,
+                COALESCE(SUM(CASE WHEN status='PENDING' THEN stake END), 0) AS pending_stake
+            FROM bets
+            {where_clause}
+            """,
+            tuple(params),
+        ).fetchone()
+
+    total_staked = round(agg_row["total_staked"] or 0, 2)
+    total_returned = round(agg_row["total_returned"] or 0, 2)
+    pending_stake = round(agg_row["pending_stake"] or 0, 2)
+    profit_normal = round(total_returned - total_staked, 2)
+    profit_conservative = round(profit_normal - pending_stake, 2)
+
+    return {
+        "bets": bets,
+        "total": agg_row["total"] or 0,
+        "won": agg_row["won"] or 0,
+        "lost": agg_row["lost"] or 0,
+        "pending": agg_row["pending"] or 0,
+        "total_staked": total_staked,
+        "total_returned": total_returned,
+        "pending_stake": pending_stake,
+        "profit_normal": profit_normal,
+        "profit_conservative": profit_conservative,
+    }
+
+
+def format_period_summary_message(summary: dict, label: str) -> str:
+    """Message complet pour la commande /bets : tableau + totaux de la période."""
+    table = format_bets_table(summary["bets"])
+
+    lines = [
+        f"📋 Paris — {label}",
+        "",
+        table,
+        "",
+        f"Total : {summary['total']} paris "
+        f"({summary['won']} gagnés, {summary['lost']} perdus, {summary['pending']} en attente)",
+        "",
+        f"💰 Total gains (encaissé) : {summary['total_returned']}",
+        f"Bénéfice (paris résolus uniquement) : {summary['profit_normal']}",
+        f"🛡️ Bénéfice si les paris en attente sont comptés perdus : {summary['profit_conservative']}",
+    ]
+    return "\n".join(lines)

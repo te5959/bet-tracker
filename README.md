@@ -95,9 +95,13 @@ d'abord la fiabilité de l'extraction sur des images réelles du groupe.
 - un **bot Telegram séparé** (via @BotFather, pas le compte utilisateur de
   la Phase 1) répond à :
   - `/stats` — résumé complet ci-dessus, à la demande ;
-  - `/bets` — tableau détaillé des paris les plus récents (jusqu'à 30,
-    tronqué proprement si la limite de taille des messages Telegram est
-    atteinte) ;
+  - `/bets` — tableau détaillé des paris avec totaux (gains encaissés,
+    bénéfice normal et conservateur), filtrable par période :
+    - `/bets` — derniers paris (30 max) ;
+    - `/bets today` — paris d'aujourd'hui ;
+    - `/bets week` — 7 derniers jours ;
+    - `/bets month` — ce mois-ci ;
+    - `/bets 2026-08-19` — un jour précis ;
   - envoi **automatique quotidien** du résumé `/stats` à une heure
     configurable (`DAILY_STATS_HOUR`, 8h par défaut) ;
 - le bot **ignore tout message** venant d'un autre utilisateur que
@@ -277,8 +281,9 @@ sqlite3 storage/bets.db "SELECT id, team_1, team_2, detected_at FROM bets WHERE 
 python run_bot.py
 ```
 
-Puis, sur Telegram, envoie `/stats` à ton bot pour tester, et `/bets` pour
-voir le tableau détaillé des paris récents.
+Puis, sur Telegram, envoie `/stats` à ton bot pour tester, et `/bets`,
+`/bets today`, `/bets week`, `/bets month` ou `/bets AAAA-MM-JJ` pour le
+détail par période.
 
 ## Tests
 

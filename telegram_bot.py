@@ -26,8 +26,14 @@ from datetime import datetime, timedelta
 from telethon import TelegramClient, events
 
 from config import Settings
-from db import init_db, get_recent_bets
-from stats import compute_statistics, format_stats_message, format_bets_table
+from db import init_db
+from stats import (
+    compute_statistics,
+    format_stats_message,
+    compute_bets_period_summary,
+    format_period_summary_message,
+    resolve_period,
+)
 from pipeline_logger import setup_logger
 
 
@@ -91,7 +97,11 @@ async def run_bot(settings: Settings) -> None:
         await event.respond(
             "👋 Bot Bet Tracker connecté !\n\n"
             "/stats — résumé complet des statistiques\n"
-            "/bets — tableau détaillé des derniers paris\n\n"
+            "/bets — derniers paris (avec totaux)\n"
+            "/bets today — paris d'aujourd'hui\n"
+            "/bets week — 7 derniers jours\n"
+            "/bets month — ce mois-ci\n"
+            "/bets 2026-08-19 — un jour précis\n\n"
             f"Un résumé automatique t'est aussi envoyé chaque jour à {settings.daily_stats_hour}h."
         )
 
@@ -103,14 +113,26 @@ async def run_bot(settings: Settings) -> None:
         await event.respond(format_stats_message(stats))
         logger.info("Statistiques envoyées à la demande")
 
-    @client.on(events.NewMessage(pattern="/bets"))
+    @client.on(events.NewMessage(pattern=r"/bets(?:\s+(.+))?"))
     async def bets_handler(event):
         if event.sender_id != settings.telegram_bot_owner_id:
             return
-        recent_bets = get_recent_bets(settings.db_path, limit=30)
-        table = format_bets_table(recent_bets)
-        await event.respond(table, parse_mode="markdown")
-        logger.info("Tableau des paris envoyé à la demande")
+
+        arg = event.pattern_match.group(1)
+        since, until, label = resolve_period(arg)
+
+        if arg and label is None:
+            await event.respond(
+                "Argument non reconnu. Utilise /bets, /bets today, /bets week, "
+                "/bets month, ou /bets AAAA-MM-JJ (ex: /bets 2026-08-19)."
+            )
+            return
+
+        limit = 30 if not arg else 200  # période précise : on ne limite pas artificiellement
+        summary = compute_bets_period_summary(settings.db_path, since=since, until=until, limit=limit)
+        message = format_period_summary_message(summary, label)
+        await event.respond(message, parse_mode="markdown")
+        logger.info("Tableau des paris envoyé à la demande (période: %s)", label)
 
     asyncio.create_task(_daily_stats_loop(client, settings, logger))
 
