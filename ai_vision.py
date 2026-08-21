@@ -55,8 +55,14 @@ BET_ANALYSIS_TOOL = {
             "team_1": {"type": "string"},
             "team_2": {"type": "string"},
             "competition": {"type": "string"},
-            "event_date": {"type": "string"},
-            "event_time": {"type": "string"},
+            "event_date": {
+                "type": "string",
+                "description": "Date du match si visible, au format AAAA-MM-JJ (ex: '2026-08-19').",
+            },
+            "event_time": {
+                "type": "string",
+                "description": "Heure du match si visible, au format 24h HH:MM (ex: '21:45').",
+            },
             "market": {
                 "type": "string",
                 "description": "Type de marché / pari (ex: 'Over 0.5 Goals - First Half').",

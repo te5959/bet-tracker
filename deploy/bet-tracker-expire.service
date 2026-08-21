@@ -5,9 +5,10 @@ After=network.target
 [Service]
 Type=simple
 WorkingDirectory=/opt/telegram-bet-tracker
-# Vérification toutes les heures : pas besoin de plus fréquent, le délai
-# d'expiration lui-même est de 24h par défaut.
-ExecStart=/opt/telegram-bet-tracker/venv/bin/python /opt/telegram-bet-tracker/expire_pending.py --loop 3600
+# Vérification toutes les 15 min : le délai principal (5h après le début
+# du match) est bien plus court que l'ancien délai fixe de 24h, une
+# vérification plus fréquente évite un retard inutile.
+ExecStart=/opt/telegram-bet-tracker/venv/bin/python /opt/telegram-bet-tracker/expire_pending.py --loop 900
 Restart=always
 RestartSec=10
 User=root

@@ -69,18 +69,25 @@ d'abord la fiabilité de l'extraction sur des images réelles du groupe.
   plus **ancien** est choisi — testé explicitement
   (`tests/test_bet_matcher.py::test_duplicate_bet_tiebreak_oldest_wins`).
 
-### Phase 5 — Expiration des paris (prête, à valider en conditions réelles)
+### Phase 5 — Expiration des paris (logique hybride, prête, à valider en conditions réelles)
 
-- passe automatiquement en `LOST` tout pari `PENDING` détecté depuis plus
-  de **24h** (délai configurable) sans confirmation de gain associée
-  (règle 6, section 13) ;
-- basé sur `detected_at` (heure de détection par le système), pas sur
-  l'heure de l'événement extraite par l'IA — plus robuste, cette dernière
-  étant souvent absente ou peu fiable ;
-- **ne touche jamais** les paris `MANUAL_REVIEW` (ils restent en attente
-  d'un regard humain) ni les paris déjà `WON` ;
-- vérification peu fréquente (toutes les heures) : pas besoin de plus,
-  le délai lui-même est de 24h.
+- **Priorité 1** : si `event_date`/`event_time` (extraits par l'IA depuis le
+  ticket) sont présents et exploitables, un pari `PENDING` est considéré
+  perdu **5h après le début du match** (bien plus précis que l'ancien délai
+  fixe) ;
+- **Priorité 2 (filet de sécurité)** : si la date/heure du match est
+  absente ou imparsable, on retombe sur l'ancienne règle — **24h après
+  `detected_at`** ;
+- le parsing des dates est tolérant (`python-dateutil`) pour gérer les
+  formats hétérogènes présents dans les données déjà extraites avant le
+  resserrement du format demandé à l'IA ;
+- **limite connue et assumée** : l'heure du ticket peut être dans un
+  fuseau horaire différent du serveur ; le délai de 5h absorbe en partie ce
+  risque mais un décalage important pourrait provoquer une expiration
+  légèrement prématurée ou tardive ;
+- **ne touche jamais** les paris `MANUAL_REVIEW` ni les paris déjà `WON` ;
+- vérification toutes les 15 minutes (plus fréquente qu'avant, cohérent
+  avec un délai principal de quelques heures).
 
 ### Phase 6 — Statistiques + Bot Telegram (prête, à valider en conditions réelles)
 
@@ -210,7 +217,7 @@ Cela installe et démarre 4 nouveaux services (ou utilisez
 | `bet-tracker-analyze` | Phase 2 : analyse IA des nouvelles images | vérifie toutes les 30s |
 | `bet-tracker-route` | Phase 3 : création des paris | vérifie toutes les 30s |
 | `bet-tracker-match` | Phase 4 : matching des gains | vérifie toutes les 30s |
-| `bet-tracker-expire` | Phase 5 : expiration des paris trop anciens | vérifie 1x/heure |
+| `bet-tracker-expire` | Phase 5 : expiration des paris (5h après match, 24h fallback) | vérifie toutes les 15 min |
 
 Avec `bet-tracker` (Phase 1, déjà actif), le pipeline complet tourne alors
 de bout en bout automatiquement : une image publiée dans le groupe est
@@ -250,14 +257,14 @@ sqlite3 storage/bets.db "SELECT id, team_1, team_2, status, confirmed_payout FRO
 ## Lancer l'expiration des paris (Phase 5)
 
 ```bash
-# Délai par défaut (24h)
+# Délais par défaut (5h après le match, 24h après détection en filet de sécurité)
 python expire_pending.py
 
-# Délai personnalisé
-python expire_pending.py --hours 12
+# Délais personnalisés
+python expire_pending.py --event-hours 6 --fallback-hours 24
 
-# Tourne en continu (vérifie 1x/heure)
-python expire_pending.py --loop 3600
+# Tourne en continu (vérifie toutes les 15 min)
+python expire_pending.py --loop 900
 ```
 
 Vérifier le résultat :

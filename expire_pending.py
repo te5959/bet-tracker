@@ -1,10 +1,10 @@
 """
-Phase 5 — Script d'expiration des paris perdus par délai.
+Phase 5 — Script d'expiration des paris perdus (logique hybride).
 
 Usage:
-    python expire_pending.py                  # délai par défaut (24h)
-    python expire_pending.py --hours 12
-    python expire_pending.py --loop 3600       # tourne en continu (vérifie 1x/heure)
+    python expire_pending.py                          # 5h après le match, sinon 24h après détection
+    python expire_pending.py --event-hours 6 --fallback-hours 24
+    python expire_pending.py --loop 1800               # tourne en continu (vérifie toutes les 30 min)
 """
 
 import argparse
@@ -13,23 +13,30 @@ import time
 from config import load_settings
 from db import init_db, count_bets_by_status
 from pipeline_logger import setup_logger
-from bet_expiry import expire_stale_bets, DEFAULT_EXPIRY_HOURS
+from bet_expiry import expire_stale_bets, EVENT_EXPIRY_HOURS, FALLBACK_EXPIRY_HOURS
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Phase 5 - Expiration des paris PENDING trop anciens")
+    parser = argparse.ArgumentParser(description="Phase 5 - Expiration des paris PENDING (hybride)")
     parser.add_argument(
-        "--hours",
+        "--event-hours",
         type=int,
-        default=DEFAULT_EXPIRY_HOURS,
-        help=f"Délai en heures avant de considérer un pari PENDING comme perdu (défaut: {DEFAULT_EXPIRY_HOURS})",
+        default=EVENT_EXPIRY_HOURS,
+        help=f"Heures après le début du match avant de considérer un pari perdu (défaut: {EVENT_EXPIRY_HOURS})",
+    )
+    parser.add_argument(
+        "--fallback-hours",
+        type=int,
+        default=FALLBACK_EXPIRY_HOURS,
+        help=f"Heures après détection si l'heure du match est inexploitable (défaut: {FALLBACK_EXPIRY_HOURS})",
     )
     parser.add_argument(
         "--loop",
         type=int,
         default=0,
-        help="Si > 0, tourne en continu avec ce nombre de secondes entre chaque vérification "
-             "(pas besoin d'un intervalle court : une vérification par heure suffit largement)",
+        help="Si > 0, tourne en continu avec ce nombre de secondes entre chaque vérification. "
+             "Avec un délai basé sur l'heure du match (quelques heures), une vérification "
+             "toutes les 15-30 minutes a plus de sens que l'ancien intervalle d'1h.",
     )
     args = parser.parse_args()
 
@@ -40,12 +47,12 @@ def main():
     if args.loop > 0:
         logger.info("Mode continu activé (vérification toutes les %ss)", args.loop)
         while True:
-            count = expire_stale_bets(settings.db_path, args.hours, logger)
+            count = expire_stale_bets(settings.db_path, logger, args.event_hours, args.fallback_hours)
             if count:
                 logger.info("%s pari(s) expiré(s) en LOST", count)
             time.sleep(args.loop)
     else:
-        count = expire_stale_bets(settings.db_path, args.hours, logger)
+        count = expire_stale_bets(settings.db_path, logger, args.event_hours, args.fallback_hours)
         if count:
             logger.info("%s pari(s) expiré(s) en LOST", count)
         else:

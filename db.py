@@ -355,21 +355,20 @@ def mark_bet_won(
 
 # --- Phase 5 : détection des paris perdus par délai ---
 
-def get_expirable_bets(db_path: Path, delay_hours: int):
-    """Retourne les paris PENDING détectés il y a plus de `delay_hours`
-    heures, encore sans confirmation de gain (règle 6, section 13).
-    Ne touche pas MANUAL_REVIEW : ces paris restent en attente d'un
-    regard humain plutôt que d'être basculés automatiquement."""
+def get_pending_bets_for_expiry(db_path: Path):
+    """Retourne tous les paris PENDING avec les champs nécessaires au calcul
+    de deadline (Phase 5, logique hybride event_date/event_time + fallback
+    sur detected_at). Le filtrage/calcul de deadline se fait côté Python
+    (bet_expiry.py), pas en SQL, car il dépend d'un parsing de dates
+    hétérogènes que SQLite ne sait pas faire nativement."""
     with get_connection(db_path) as conn:
         rows = conn.execute(
             """
-            SELECT id, team_1, team_2, detected_at
+            SELECT id, team_1, team_2, event_date, event_time, detected_at
             FROM bets
             WHERE status = 'PENDING'
-              AND detected_at <= datetime('now', ?)
             ORDER BY id ASC
-            """,
-            (f"-{delay_hours} hours",),
+            """
         ).fetchall()
         return [dict(row) for row in rows]
 
